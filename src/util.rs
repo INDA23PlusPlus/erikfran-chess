@@ -1,5 +1,4 @@
 use std::ops::{Index, IndexMut};
-use std::iter::IntoIterator;
 use crate::{Move, Piece};
 
 #[derive(Clone, Copy)]
@@ -51,13 +50,13 @@ impl IndexMut<Rank> for Board {
 }
 
 #[derive(Clone, Copy)]
-pub struct Board_Move {
+pub struct BoardMove {
     pub rows: Rows<Rows<Option<Move>>>,
 }
 
-impl From<[[Option<Move>; 8]; 8]> for Board_Move {
+impl From<[[Option<Move>; 8]; 8]> for BoardMove {
     fn from (value: [[Option<Move>; 8]; 8]) -> Self {
-        Board_Move { rows: Rows { squares: [
+        BoardMove { rows: Rows { squares: [
             Rows { squares: value[0] },
             Rows { squares: value[1] },
             Rows { squares: value[2] },
@@ -70,7 +69,7 @@ impl From<[[Option<Move>; 8]; 8]> for Board_Move {
     }
 }
 
-impl Index<Square> for Board_Move {
+impl Index<Square> for BoardMove {
     type Output = Option<Move>;
 
     fn index(&self, square: Square) -> &Self::Output {
@@ -78,13 +77,13 @@ impl Index<Square> for Board_Move {
     }
 }
 
-impl IndexMut<Square> for Board_Move {
+impl IndexMut<Square> for BoardMove {
     fn index_mut(&mut self, square: Square) -> &mut Self::Output {
         &mut self[square.rank][square.file]
     }
 }
 
-impl Index<Rank> for Board_Move {
+impl Index<Rank> for BoardMove {
     type Output = Rows<Option<Move>>;
 
     fn index(&self, rank: Rank) -> &Self::Output {
@@ -92,7 +91,7 @@ impl Index<Rank> for Board_Move {
     }
 }
 
-impl IndexMut<Rank> for Board_Move {
+impl IndexMut<Rank> for BoardMove {
     fn index_mut(&mut self, rank: Rank) -> &mut Self::Output {
         &mut self.rows.squares[rank as usize]
     }
@@ -117,7 +116,7 @@ impl<T> IndexMut<File> for Rows<T> {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Square {
     pub file: File,
     pub rank: Rank,
@@ -144,20 +143,26 @@ impl TryFrom<(i32, i32)> for Square {
     }
 }
 
-pub const FILE_ITER: std::vec::IntoIter<File> = vec![File::A, File::B, File::C, File::D, File::E, File::F, File::G, File::H].into_iter();
-pub const RANK_ITER: std::vec::IntoIter<Rank>  = vec![Rank::R1, Rank::R2, Rank::R3, Rank::R4, Rank::R5, Rank::R6, Rank::R7, Rank::R8].into_iter();
-pub const SQUARE_ITER: std::vec::IntoIter<Square>  = 
-FILE_ITER
-    .map(|file|
-        RANK_ITER
-            .map(|rank|
-                Square { file, rank }))
-    .flatten()
-    .collect::<Vec<Square>>()
-    .into_iter();
+pub const FILE_ARRAY: [File; 8] = [File::A, File::B, File::C, File::D, File::E, File::F, File::G, File::H];
+pub const RANK_ARRAY: [Rank; 8]  = [Rank::R1, Rank::R2, Rank::R3, Rank::R4, Rank::R5, Rank::R6, Rank::R7, Rank::R8];
+pub const fn get_square_array() -> [Square; 64]{
+    let mut file: usize = 0;
+    let mut square_array: [Square; 64] = [Square { file: File::A, rank: Rank::R1 }; 64];
+    while file < 8 {
+        let mut rank: usize = 0;
+        while rank < 8 {
+            square_array[file * 8 + rank] = Square { file: FILE_ARRAY[file], rank: RANK_ARRAY[rank] };
+            rank += 1;
+        }
+        file += 1;
+    }
+
+    square_array
+}
+
 
 #[repr(i32)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum File {
     A,
     B,
@@ -172,6 +177,10 @@ pub enum File {
 impl File {
     pub fn abs_diff(&self, other: File) -> i32 {
         ((*self as i32) - (other as i32)).abs()
+    }
+
+    pub fn num(&self) -> i32 {
+        *self as i32
     }
 }
 
@@ -200,7 +209,7 @@ impl TryFrom<i32> for File {
 }
 
 #[repr(i32)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Rank {
     R1,
     R2,
@@ -215,6 +224,10 @@ pub enum Rank {
 impl Rank {
     pub fn abs_diff(&self, other: Rank) -> i32 {
         ((*self as i32) - (other as i32)).abs()
+    }
+
+    pub fn num(&self) -> i32 {
+        *self as i32
     }
 }
 

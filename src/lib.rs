@@ -1,12 +1,11 @@
 use std::fmt::Display;
 
-mod util;
-use util::{ Square, Rank, File, Board, Rows, FILE_ITER, RANK_ITER };
-use crate::util::{Board_Move, SQUARE_ITER};
+pub mod util;
+use util::{Square, Rank, File, Board, Rows, FILE_ARRAY, RANK_ARRAY, BoardMove, get_square_array};
 
 //TODO: think about if Copy and Clone are necessary just because compiler recommends it
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum PieceTypes {
     Pawn(bool),
     Bishop,
@@ -16,7 +15,7 @@ pub enum PieceTypes {
     King,
 }
 
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum Color {
     White,
     Black,
@@ -38,25 +37,26 @@ pub struct Piece {
     pub color: Color,
 }
 
+#[derive(PartialEq, Debug)]
 pub enum GameStatus {
     Checkmate(Color),
-    Draw,
     Ongoing,
     Promoting,
 }
 
-#[derive(PartialEq, Eq, Copy, Clone)]
+#[derive(PartialEq, Eq, Copy, Clone, Debug)]
 pub enum CastlingSide {
     KingSide,
     QueenSide,
 }
 
+#[derive(Debug)]
 pub struct Castling {
-    white: (Option<CastlingSide>, Option<CastlingSide>),
-    black: (Option<CastlingSide>, Option<CastlingSide>),
+    pub white: (Option<CastlingSide>, Option<CastlingSide>),
+    pub black: (Option<CastlingSide>, Option<CastlingSide>),
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 pub enum Move {
     Normal {
         from: Square,
@@ -73,9 +73,9 @@ pub struct Game {
     pub turn: Color,
     pub captured: Vec<Piece>,
     pub castling: Castling,
-    pub fifty_move_rule: u8,
-    pub en_passant_white: Option<Square>,
-    pub en_passant_black: Option<Square>,
+    //pub fifty_move_rule: u8,
+    /*pub en_passant_white: Option<Square>,
+    pub en_passant_black: Option<Square>,*/
     pub check: bool,
     pub game_status: GameStatus,
 }
@@ -104,8 +104,8 @@ impl Game {
                     Some(Piece { piece: PieceTypes::Rook, color: Color::Black }),
                     Some(Piece { piece: PieceTypes::Knight, color: Color::Black }),
                     Some(Piece { piece: PieceTypes::Bishop, color: Color::Black }),
-                    Some(Piece { piece: PieceTypes::King, color: Color::Black }),
                     Some(Piece { piece: PieceTypes::Queen, color: Color::Black }),
+                    Some(Piece { piece: PieceTypes::King, color: Color::Black }),
                     Some(Piece { piece: PieceTypes::Bishop, color: Color::Black }),
                     Some(Piece { piece: PieceTypes::Knight, color: Color::Black }),
                     Some(Piece { piece: PieceTypes::Rook, color: Color::Black })
@@ -117,9 +117,9 @@ impl Game {
                 white: (Some(CastlingSide::KingSide), Some(CastlingSide::QueenSide)),
                 black: (Some(CastlingSide::KingSide), Some(CastlingSide::QueenSide)),
             },
-            fifty_move_rule: 0,
+            /*fifty_move_rule: 0,
             en_passant_black: None,
-            en_passant_white: None,
+            en_passant_white: None,*/
             check: false,
             game_status: GameStatus::Ongoing,
         }
@@ -129,26 +129,40 @@ impl Game {
     Tries making move described by coordinates. If unsuccessful no move will be made and you can try making a leagal move again.
     The return vale is an option that shows if a player has won this turn and in that case which color won.
     */
-    pub fn try_move(&mut self, mv: Move) -> Result<(), Error> {
+    pub fn try_move(&mut self, mv: Move) -> Result<(), MoveError> {
         match mv {
             Move::Castle { side } => {
                 let (home_row, possible_castles): (Rank, _) = match self.turn {
-                    Color::White => (Rank::R1, &self.castling.white),
-                    Color::Black => (Rank::R8, &self.castling.black),
+                    Color::White => (Rank::R1, self.castling.white),
+                    Color::Black => (Rank::R8, self.castling.black),
                 };
 
                 match possible_castles {
                     (Some(CastlingSide::KingSide), ..) if side == CastlingSide::KingSide => {
                         if self.board[home_row][File::F].is_some() || self.board[home_row][File::G].is_some() {
-                            return Err(Error::Collision);
+                            return Err(MoveError::Collision);
                         }
 
                         let test_move = Move::Normal {
                             from: Square { file: File::E, rank: home_row },
                             to: Square { file: File::F, rank: home_row },
                         };
-                        if self.check_check(test_move, self.turn) || self.check {
-                            return Err(Error::CastlingError);
+                        if self.check_check(mv, self.turn) || self.check_check(test_move, self.turn) || self.check {
+                            return Err(MoveError::CastlingError);
+                        }
+
+                        if self.check_check(mv, self.turn.opposite()) {
+                            self.check = true;
+                        }
+                        else { self.check = false; }
+
+                        if self.checkmate_check(mv, self.turn.opposite()) {
+                            self.game_status = GameStatus::Checkmate(self.turn);
+                        }
+
+                        match self.turn {
+                            Color::White => { self.castling.white = (None, None); },
+                            Color::Black => { self.castling.black = (None, None); },
                         }
 
                         self.board[home_row][File::G] = self.board[home_row][File::E];
@@ -158,15 +172,29 @@ impl Game {
                     },
                     (.., Some(CastlingSide::QueenSide)) if side == CastlingSide::QueenSide => {
                         if self.board[home_row][File::D].is_some() || self.board[home_row][File::C].is_some() || self.board[home_row][File::B].is_some() {
-                            return Err(Error::Collision);
+                            return Err(MoveError::Collision);
                         }
 
                         let test_move = Move::Normal {
                             from: Square { file: File::E, rank: home_row },
                             to: Square { file: File::D, rank: home_row },
                         };
-                        if self.check_check(test_move, self.turn) || self.check {
-                            return Err(Error::CastlingError);
+                        if self.check_check(mv, self.turn) || self.check_check(test_move, self.turn) || self.check {
+                            return Err(MoveError::CastlingError);
+                        }
+
+                        if self.check_check(mv, self.turn.opposite()) {
+                            self.check = true;
+                        }
+                        else { self.check = false; }
+
+                        if self.checkmate_check(mv, self.turn.opposite()) {
+                            self.game_status = GameStatus::Checkmate(self.turn);
+                        }
+
+                        match self.turn {
+                            Color::White => { self.castling.white = (None, None); },
+                            Color::Black => { self.castling.black = (None, None); },
                         }
 
                         self.board[home_row][File::C] = self.board[home_row][File::E];
@@ -174,19 +202,21 @@ impl Game {
                         self.board[home_row][File::A] = None;
                         self.board[home_row][File::E] = None;
                     },
-                    _ => return Err(Error::CastlingError),
+                    _ => return Err(MoveError::CastlingError),
                 }
+
+
             },
             Move::Normal { from, to } => {
                 let origin = match self.board[from] {
-                    Some( Piece { color: c, .. } ) if c != self.turn => return Err(Error::OpponentPiece),
+                    Some( Piece { color: c, .. } ) if c != self.turn => return Err(MoveError::OpponentPiece),
                     Some(o) => o,
-                    None => return Err(Error::EmptySquare),
+                    None => return Err(MoveError::EmptySquare),
                 };
 
                 let captured = match self.board[to] {
                     Some(Piece { color: c, .. }) if c == origin.color =>
-                        return Err(Error::Collision),
+                        return Err(MoveError::Collision),
                     destination @ _ => destination
                 };
 
@@ -195,36 +225,60 @@ impl Game {
                 match origin.piece {
                     PieceTypes::Bishop => {
                         if from.file.abs_diff(to.file) != from.rank.abs_diff(to.rank) {
-                            return Err(Error::WrongPieceMovement);
+                            return Err(MoveError::WrongPieceMovement);
                         }
                         else if self.collision_check_line(from, to, self.turn) {
-                            return Err(Error::Collision);
+                            return Err(MoveError::Collision);
                         }
                     },
                     PieceTypes::King => {
                         if !((from.file).abs_diff(to.file) <= 1 && (from.rank).abs_diff(to.rank) <= 1) {
-                            return Err(Error::WrongPieceMovement);
+                            return Err(MoveError::WrongPieceMovement);
                         }
                         else if self.collision_check(to, self.turn) {
-                            return Err(Error::Collision);
+                            return Err(MoveError::Collision);
                         }
+
+                        match from.rank {
+                            Rank::R1 => { self.castling.white = (None, None); },
+                            Rank::R8 => { self.castling.black = (None, None); },
+                            _ => {}
+                        }
+
                     },
                     PieceTypes::Queen => {
                         if from.file.abs_diff(to.file) == from.rank.abs_diff(to.rank) ||
                             (from.file.abs_diff(to.file) > 0) ^ (from.rank.abs_diff(to.rank) > 0) {
                             if self.collision_check_line(from, to, self.turn) {
-                                return Err(Error::Collision);
+                                return Err(MoveError::Collision);
                             }
                         } else {
-                            return Err(Error::WrongPieceMovement);
+                            return Err(MoveError::WrongPieceMovement);
                         }
                     },
                     PieceTypes::Rook => {
                         if !((from.file.abs_diff(to.file) > 0) ^ (from.rank.abs_diff(to.rank) > 0)){
-                            return Err(Error::WrongPieceMovement);
+                            return Err(MoveError::WrongPieceMovement);
                         }
                         else if self.collision_check_line(from, to, self.turn) {
-                            return Err(Error::Collision);
+                            return Err(MoveError::Collision);
+                        }
+                        match from.file {
+                            File::A => {
+                                match from.rank {
+                                    Rank::R1 => { self.castling.white.1 = None; },
+                                    Rank::R8 => { self.castling.black.1 = None; },
+                                    _ => {}
+                                }
+                            },
+                            File::H => {
+                                match from.rank {
+                                    Rank::R1 => { self.castling.white.0 = None; },
+                                    Rank::R8 => { self.castling.black.0 = None; },
+                                    _ => {}
+                                }
+                            },
+                            _ => {}
                         }
                     },
                     PieceTypes::Pawn(moved) => {
@@ -234,22 +288,34 @@ impl Game {
                             Color::Black => { origin_row = 6; -1 }
                         };
 
-                        if !(multiply * (to.rank.abs_diff(from.rank)) as i32 <= 2) {
-                            return Err(Error::WrongPieceMovement);
+                        if !((multiply * (to.rank.abs_diff(from.rank)) == 1
+                            && to.file.abs_diff(from.file) <= 1)
+                            || (to.rank.abs_diff(from.rank) == 2
+                            && to.file.abs_diff(from.file) == 0)) {
+                            return Err(MoveError::WrongPieceMovement);
                         }
-                        //checks for en passant
-                        else if to.rank.abs_diff(from.rank) == 2 {
-                            if moved { return Err(Error::PawnDubbleMove); }
-                            if self.collision_check_line(from, to, self.turn) {
-                                return Err(Error::Collision);
+
+                        if self.board[Rank::try_from(multiply + i32::from(from.rank)).unwrap()][from.file].is_some()
+                            && to.file.abs_diff(from.file) == 0 {
+                            return Err(MoveError::Collision);
+                        }
+
+                        if self.collision_check(to, self.turn) && to.file.abs_diff(from.file) == 1 {
+                            return Err(MoveError::Collision);
+                        }
+
+                        if to.rank.abs_diff(from.rank) == 2 {
+                            if moved { return Err(MoveError::PawnDubbleMove); }
+                            if self.board[to].is_some() {
+                                return Err(MoveError::Collision);
                             }
-                            else if from.rank as i32 == origin_row {
+                            /*else if from.rank.num() == origin_row {
                                 self.en_passant_black = Some(to);
                                 //TODO: add en passant
-                            }
+                            }*/
                         }
                         //checks for promotions
-                        /*if origin_row - multiply == to.rank as i32 {
+                        /*if origin_row - multiply == to.rank.num() {
                             //TODO: add promotions
                             //IDEA: use a game state enum to indicate when promotion happens.
                         }*/
@@ -260,34 +326,34 @@ impl Game {
                             && (from.rank.abs_diff(to.rank) == 1)) ^
                             ((from.file.abs_diff(to.file) == 1)
                             && (from.rank.abs_diff(to.rank) == 2))) {
-                            return Err(Error::WrongPieceMovement);
+                            return Err(MoveError::WrongPieceMovement);
                         }
                         else if self.collision_check(to, self.turn) {
-                            return Err(Error::Collision);
+                            return Err(MoveError::Collision);
                         }
                     },
                 }
 
                 if self.check_check(mv, self.turn) {
-                    return Err(Error::SelfCheck);
+                    return Err(MoveError::SelfCheck);
                 }
 
                 if let Some(c) = captured {
                     self.captured.push(c);
                 }
 
+                if self.check_check(mv, self.turn.opposite()) {
+                    self.check = true;
+                }
+                else { self.check = false; }
+
+                if self.checkmate_check(mv, self.turn.opposite()) {
+                    self.game_status = GameStatus::Checkmate(self.turn);
+                }
+
                 self.board[to] = Some(origin);
                 self.board[from] = None;
             },
-        }
-
-        if self.check_check(mv, self.turn.opposite()) {
-            self.check = true;
-        }
-        else { self.check = false; }
-
-        if self.checkmate_check(mv, self.turn.opposite()) {
-            self.game_status = GameStatus::Checkmate(self.turn);
         }
 
         self.turn = self.turn.opposite();
@@ -300,10 +366,12 @@ impl Game {
 
     ///checks for collisions with pieces of the color color or multiple collisions with the other color in a line from origin to destination. Returns the sqaure where the piece cant go becasuse of the collison. Can input out of bounds cords and it will stop at the edge
     fn collision_check_line(&self, from: Square, to: Square, color: Color) -> bool {
-        let direction = (
-            (to.file as i32 - from.file as i32).signum(),
-            (from.rank as i32 - from.rank as i32).signum()
+        let direction: (i32, i32) = (
+            (to.file.num() - from.file.num()).signum(),
+            (to.rank.num() - from.rank.num()).signum()
         );
+
+        //let t_2 = (from.file.num(), from.rank.num(), to.file.num(), to.rank.num());
 
         let range =
             if direction.0 != 0 { from.file.abs_diff(to.file) }
@@ -315,15 +383,19 @@ impl Game {
         */
         let mut enemy_counter = false;
         for i in 1..=range {
-            let x = from.file as i32 + direction.0 * i;
-            let y = from.rank as i32 + direction.1 * i;
+            let x = from.file.num() + direction.0 * i;
+            let y = from.rank.num() + direction.1 * i;
 
             let square = Square::try_from((x, y)).unwrap();
 
-            if enemy_counter { return true }
+            if enemy_counter {
+                return true
+            }
 
             if let Some(piece) = self.board[square] {
-                if piece.color == color { return true }
+                if piece.color == color {
+                    return true
+                }
                 else { enemy_counter = true; }
             }
         }
@@ -344,6 +416,7 @@ impl Game {
 
         match mv {
             Move::Normal { from, to } => {
+
                 self.board[to] = Some(self.board[from].unwrap());
                 self.board[from] = None;
             },
@@ -366,26 +439,34 @@ impl Game {
                         self.board[home_row][File::A] = None;
                         self.board[home_row][File::E] = None;
                     },
-                    _ => panic!(),
+                    _ => return false,
                 }
             }
         }
 
         let mut king_pos = None;
-        for square in SQUARE_ITER {
+        for square in get_square_array() {
             if let Some(piece) = self.board[square] {
-                if piece.piece == PieceTypes::King && piece.color == color {
+                //println!("{:?}, {:?}", piece.piece == PieceTypes::King, piece.color == color);
+                if (piece.piece == PieceTypes::King && piece.color == color) {
                     king_pos = Some(square);
                 }
             }
         }
-
+        //println!();
+        //println!("move: {:?}", mv);
         assert!(king_pos.is_some());
         let mut result = false;
 
-        for square in SQUARE_ITER {
-            if let Ok((moves, _)) = self.possible_moves(square) {
+        for square in get_square_array() {
+            if let Some(piece) = self.board[square] {
+                if piece.color == color {
+                    continue;
+                }
+            }
+            if let Ok((moves, _)) = self.possible_moves(square, false) {
                 if moves[king_pos.unwrap()].is_some() {
+                    //println!("move_2: {:?}", moves[king_pos.unwrap()]);
                     result = true;
                     break;
                 }
@@ -436,10 +517,15 @@ impl Game {
 
         let mut result = false;
 
-        for square in SQUARE_ITER {
+        for square in get_square_array() {
+            if let Some(piece) = self.board[square] {
+                if piece.color != color {
+                    continue;
+                }
+            }
             //ignore castles since they cant be done if you are in check.
-            if let Ok((moves, _)) = self.possible_moves(square) {
-                for square_1 in SQUARE_ITER {
+            if let Ok((moves, _)) = self.possible_moves(square, false) {
+                for square_1 in get_square_array() {
                     if moves[square_1].is_some() {
                         let test_move = Move::Normal {
                             from: square,
@@ -460,38 +546,46 @@ impl Game {
         &mut self,
         color: Color,
         from: Square,
-        possible_board: &mut Board_Move,
-        directions: Vec<(i32, i32)>
+        possible_board: &mut BoardMove,
+        directions: Vec<(i32, i32)>,
+        check_checks: bool
     ) {
         for direction in directions {
             for i in 1..=8 {
-                let x_1 = from.rank as i32 + direction.0 * i;
-                let y_1 = from.rank as i32 + direction.1 * i;
+                let x_1 = from.rank.num() + direction.0 * i;
+                let y_1 = from.rank.num() + direction.1 * i;
 
-                self.test_move(possible_board, x_1, y_1, from, color);
+                self.test_move(possible_board, x_1, y_1, from, color, check_checks);
             }
         }
     }
 
-    fn test_move(&mut self, possible_board: &mut Board_Move, x: i32, y: i32, from: Square, color: Color) {
+    fn test_move(&mut self, possible_board: &mut BoardMove, x: i32, y: i32, from: Square, color: Color, check_checks: bool) {
+        let mut test = false;
+
         if let Ok(square) = Square::try_from((x, y)) {
             if !self.collision_check(square, color) {
                 let test_move = Move::Normal {
                     from,
                     to: square,
                 };
-                if !self.check_check(test_move, self.turn) {
+                if !check_checks || !self.check_check(test_move, self.turn) {
+                    test = true;
                     possible_board[square] = Some(test_move);
                 }
             }
         }
+        //if (x > 7 || x < 0 || y > 7 || y < 0) && test { println!("{:?}, {}, {}", from, x, y) }
     }
 
     /// returns a board with all the normal moves possible for the piece in the from Square.
     /// potential Castelmoves are returned in a seperate Vec.
-    pub fn possible_moves(&mut self, from: Square) -> Result<(Board_Move, Vec<Move>), Error> {
-        let piece = self.board[from].map_or(Err(Error::EmptySquare), |p| Ok(p))?;
-        let mut possible_board = Board_Move::from([[None; 8]; 8]);
+    /// If check_checks is true the function will check if the move leads to check and if it does it will not be included in the return value. 
+    /// this is only false when calling the function internaly to prevent stack overflow.
+    /// TLDR: check_checks should always be true when calling this function.
+    pub fn possible_moves(&mut self, from: Square, check_checks: bool) -> Result<(BoardMove, Vec<Move>), MoveError> {
+        let piece = self.board[from].map_or(Err(MoveError::EmptySquare), |p| Ok(p))?;
+        let mut possible_board = BoardMove::from([[None; 8]; 8]);
         let mut castles: Vec<Move> = vec![];
 
         let straight_directions: Vec<(i32, i32)> = vec![(1, 0), (0, 1), (-1, 0), (0, -1)];
@@ -499,39 +593,40 @@ impl Game {
         match piece.piece {
             PieceTypes::Knight => {
                 for direction in straight_directions {
-                    let x_temp: i32 = direction.0 * 2 + from.file as i32;
-                    let y_temp: i32 = direction.1 * 2 + from.rank as i32;
+                    let x_temp: i32 = direction.0 * 2 + from.file.num();
+                    let y_temp: i32 = direction.1 * 2 + from.rank.num();
 
                     let x_1 = x_temp + direction.1;
                     let y_1 = y_temp + direction.0;
-                    self.test_move(&mut possible_board, x_1, y_1, from, piece.color);
+                    self.test_move(&mut possible_board, x_1, y_1, from, piece.color, check_checks);
 
                     let x_2 = x_temp - direction.1;
                     let y_2 = y_temp - direction.0;
-                    self.test_move(&mut possible_board, x_2, y_2, from, piece.color);
+                    self.test_move(&mut possible_board, x_2, y_2, from, piece.color, check_checks);
                 }
             },
             PieceTypes::King => {
                 for direction in [straight_directions, diagonal_directions].concat() {
-                    let x_1 = from.file as i32 + direction.0;
-                    let y_1 = from.rank as i32 + direction.1;
+                    let x_1 = from.file.num() + direction.0;
+                    let y_1 = from.rank.num() + direction.1;
 
-                    self.test_move(&mut possible_board, x_1, y_1, from, piece.color);
+                    self.test_move(&mut possible_board, x_1, y_1, from, piece.color, check_checks);
                 }
             },
             PieceTypes::Bishop => {
-                self.possible_moves_directions(piece.color, from, &mut possible_board, diagonal_directions);
+                self.possible_moves_directions(piece.color, from, &mut possible_board, diagonal_directions, check_checks);
             },
             PieceTypes::Rook => {
-                self.possible_moves_directions(piece.color, from, &mut possible_board, straight_directions);
+                self.possible_moves_directions(piece.color, from, &mut possible_board, straight_directions, check_checks);
 
                 let (home_row, possible_castles): (Rank, _) = match piece.color {
-                    Color::White => (Rank::R1, &self.castling.white),
-                    Color::Black => (Rank::R8, &self.castling.black),
+                    Color::White => (Rank::R1, self.castling.white),
+                    Color::Black => (Rank::R8, self.castling.black),
                 };
 
                 if let (Some(CastlingSide::KingSide), ..) = possible_castles {
                     'label: {
+                        //println!("{:?}", self.castling);
                         let test_move = Move::Normal {
                             from: Square { file: File::E, rank: home_row },
                             to: Square { file: File::F, rank: home_row },
@@ -579,7 +674,7 @@ impl Game {
                 }
             },
             PieceTypes::Queen => {
-                self.possible_moves_directions(piece.color, from, &mut possible_board, [straight_directions, diagonal_directions].concat());
+                self.possible_moves_directions(piece.color, from, &mut possible_board, [straight_directions, diagonal_directions].concat(), check_checks);
             },
             PieceTypes::Pawn(moved) => {
                 let movement_direction: i32 = match piece.color {
@@ -589,20 +684,28 @@ impl Game {
 
                 //TODO: add en passant
                 //checks one or two moves forward
-                let y_1: i32 = from.rank as i32 + movement_direction;
-                self.test_move(&mut possible_board, from.rank.into(), y_1, from, piece.color);
+                let y_1: i32 = from.rank.num() + movement_direction;
 
-                if !moved {
-                    let y_2: i32 = from.rank as i32 + movement_direction * 2;
-                    self.test_move(&mut possible_board, from.rank.into(), y_2, from, piece.color);
+                if let Ok(rank_1) = Rank::try_from(y_1) {
+                    if self.board[rank_1][from.file].is_none() {
+                        self.test_move(&mut possible_board, from.rank.into(), y_1, from, piece.color, check_checks);
+
+                        let y_2: i32 = from.rank.num() + movement_direction * 2;
+
+                        if let Ok(rank_2) = Rank::try_from(y_2) {
+                            if !moved && self.board[rank_2][from.file].is_none() {
+                                self.test_move(&mut possible_board, from.file.into(), y_2, from, piece.color, check_checks);
+                            }
+                        }
+                    }
                 }
 
                 //checks for enemy's in the diagonal
-                let x_3 = from.file as i32 + 1;
-                self.test_move(&mut possible_board, x_3, y_1, from, piece.color);
+                let x_3 = from.file.num() + 1;
+                self.test_move(&mut possible_board, x_3, y_1, from, piece.color, check_checks);
 
-                let x_4 = from.file as i32 - 1;
-                self.test_move(&mut possible_board, x_4, y_1, from, piece.color);
+                let x_4 = from.file.num() - 1;
+                self.test_move(&mut possible_board, x_4, y_1, from, piece.color, check_checks);
             }
         }
         Ok((possible_board, castles))
@@ -627,7 +730,7 @@ impl Game {
 
 //TODO read how to and then make a proper error implementation with std::error::Error.
 #[derive(Debug, PartialEq)]
-pub enum Error {
+pub enum MoveError {
     OpponentPiece,
     ///trying to access an empty square
     EmptySquare,
@@ -639,24 +742,36 @@ pub enum Error {
     None,
 }
 
-impl Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "Error")
+use std::error;
+use std::fmt;
+
+impl fmt::Display for MoveError {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match *self {
+            MoveError::OpponentPiece => write!(f, "Opponent piece: the piece you are trying to move is not yours"),
+            MoveError::EmptySquare => write!(f, "Empty square: the square you are trying to move from is empty"),
+            MoveError::WrongPieceMovement => write!(f, "Wrong piece movement: the piece you are trying to move cant move like that"),
+            MoveError::Collision => write!(f, "Collision: the piece you are trying to move cant move there because of a collision. Either with a piece of your own or the opponents"),
+            MoveError::PawnDubbleMove => write!(f, "Pawn dubble move: the pawn you are trying to move has already moved. Can only move two squares on the first move"),
+            MoveError::CastlingError => write!(f, "Castling error: the castling you are trying to do is not possible"),
+            MoveError::SelfCheck => write!(f, "Self check: the move you are trying to do leads to check for yourself"),
+            MoveError::None => write!(f, "None: the move you are trying to do is not possible"),
+        }
     }
 }
 
-impl std::error::Error for Error { }
+impl error::Error for MoveError { }
 
-//TODO: add tests
 #[cfg(test)]
 mod tests {
-    use pgn_reader::{Visitor, Skip, BufferedReader, SanPlus, San, File, Rank, Square};
-    use crate::{ Game, Error, Color, Piece, PieceTypes };
-    use shakmaty::{ Chess, Position, Move };
+    use pgn_reader::{Visitor, Skip, BufferedReader, SanPlus, Outcome};
+    use super::*;
+    use shakmaty::{Chess, Position};
 
     use reqwest;
     use tokio;
     use std::{io::Read, env};
+    use shakmaty::Outcome::Decisive;
 
     use super::*;
 
@@ -736,25 +851,28 @@ mod tests {
 
 
     struct TestGame {
-        moves: Vec<(Move)>,
+        moves: Vec<crate::Move>,
         chess: Chess,
+        outcome: Option<Outcome>,
     }
 
     impl TestGame {
         fn new() -> TestGame {
             TestGame {
                 moves: vec![],
-                chess: Chess::default()
+                chess: Chess::default(),
+                outcome: None,
             }
         }
     }
 
     impl Visitor for TestGame {
-        type Result = Vec<crate::Move>;
+        type Result = (Vec<crate::Move>, Option<Outcome>);
 
         fn begin_game(&mut self) {
             self.moves = vec![];
             self.chess = Chess::default();
+            self.outcome = None;
         }
 
         fn san(&mut self, san_plus: SanPlus) {
@@ -764,16 +882,23 @@ mod tests {
 
             match mov {
                 shakmaty::Move::Normal { from, to, .. } => {
-                    self.moves.push(Move::Normal {
-                        from: Square {
-                            file: file::from(i32::from(from.file())),
-                            rank: rank::from(i32::from(from.rank()))
-                        },
-                        to: Square {
-                            file: file::from(i32::from(to.file())),
-                            rank: rank::from(i32::from(to.rank()))
-                        });
+                    self.moves.push(
+                        crate::Move::Normal {
+                            from: square_to_square(from),
+                            to: square_to_square(to)
+                        }
+                    );
+                },
+                shakmaty::Move::Castle { king, rook } => {
+                    self.moves.push(crate::Move::Castle {
+                        side: match rook {
+                            shakmaty::Square::A1 | shakmaty::Square::A8 => CastlingSide::QueenSide,
+                            shakmaty::Square::H1 | shakmaty::Square::H8 => CastlingSide::KingSide,
+                            _ => unreachable!(),
+                        }
+                    });
                 }
+                _ => {},
             }
 
             self.chess = self.chess.clone().play(&mov).unwrap();
@@ -783,20 +908,55 @@ mod tests {
             Skip(true) // stay in the mainline
         }
 
+        fn outcome(&mut self, outcome: Option<Outcome>) {
+            self.outcome = outcome;
+        }
+
         fn end_game(&mut self) -> Self::Result {
-            self.moves.clone()
+            (self.moves.clone(), self.outcome.clone())
+        }
+    }
+
+    fn square_to_square (square: shakmaty::Square) -> Square {
+        Square {
+            file: match square.file() {
+                shakmaty::File::A => File::A,
+                shakmaty::File::B => File::B,
+                shakmaty::File::C => File::C,
+                shakmaty::File::D => File::D,
+                shakmaty::File::E => File::E,
+                shakmaty::File::F => File::F,
+                shakmaty::File::G => File::G,
+                shakmaty::File::H => File::H,
+            },
+            rank: match square.rank() {
+                shakmaty::Rank::First => Rank::R1,
+                shakmaty::Rank::Second => Rank::R2,
+                shakmaty::Rank::Third => Rank::R3,
+                shakmaty::Rank::Fourth => Rank::R4,
+                shakmaty::Rank::Fifth => Rank::R5,
+                shakmaty::Rank::Sixth => Rank::R6,
+                shakmaty::Rank::Seventh => Rank::R7,
+                shakmaty::Rank::Eighth => Rank::R8,
+            },
+        }
+    }
+
+    fn piece_to_char(piece: Option<Piece>) -> char {
+        match piece {
+            Some(Piece { piece: PieceTypes::Bishop, .. }) => 'b',
+            Some(Piece { piece: PieceTypes::Rook, .. }) => 'r',
+            Some(Piece { piece: PieceTypes::King, .. }) => 'K',
+            Some(Piece { piece: PieceTypes::Queen, .. }) => 'q',
+            Some(Piece { piece: PieceTypes::Knight, .. }) => 'k',
+            Some(Piece { piece: PieceTypes::Pawn(_), .. }) => 'p',
+            None => '.',
         }
     }
 
     #[tokio::test]
     async fn database_games_test() {
         env::set_var("RUST_BACKTRACE", "1");
-        /*let pgn = b"1. e4 e5 2. Nf3 (2. f4)
-            { game paused due to bad weather }
-            2... Nf6 *";*/
-        let mut r = Ok(());
-
-        println!("1");
 
         for i in 0..10 {
             let res = reqwest::get("https://lichess.org/game/export/TJxUmbWK")
@@ -812,97 +972,50 @@ mod tests {
             let mut reader = BufferedReader::new_cursor(&pgn[..]);
 
             let mut test_game = TestGame::new();
-            let moves = match reader.read_game(&mut test_game).unwrap()
-            {
+            let (moves, outcome) = match reader.read_game(&mut test_game).unwrap() {
                 Some(m) => m,
-                None => vec![],
+                None => (vec![], None),
             };
 
-            /* let move_list = [
-            [0, 1, 0, 2], //Pawn
-            [0, 0, 0, 1], //Rook
-            [1, 0, 2, 2], //Knight
-            [2, 0, 4, 2], //bishop
-            [3, 0, 2, 0], //Queen
-            [4, 0, 3, 0], //King
-            //[3, 0, 3, 0], //King
-            ];*/
-
             let mut game = Game::new();
-
             println!("{:?}", moves);
 
-            for row in moves {
-                let from.file = row[0];
-                let from.rank = row[1];
-                let to.file = row[2];
-                let to.rank = row[3];
 
-                println!("moving {}, from {from.file}, {from.rank} to {to.file}, {to.rank}", match game.board[from] {
-                    Some(Piece { piece: PieceTypes::Bishop, .. }) => "b",
-                    Some(Piece { piece: PieceTypes::Rook, .. }) => "r",
-                    Some(Piece { piece: PieceTypes::King, .. }) => "K",
-                    Some(Piece { piece: PieceTypes::Queen, .. }) => "q",
-                    Some(Piece { piece: PieceTypes::Knight, .. }) => "k",
-                    Some(Piece { piece: PieceTypes::Pawn(_), .. }) => "p",
-                    None => ".",
-                });
-
-                let win = game.try_move(from.file, from.rank, to.file, to.rank).unwrap();
-
-                println!("moved {}", match game.board[to] {
-                    Some(Piece { piece: PieceTypes::Bishop, .. }) => "b",
-                    Some(Piece { piece: PieceTypes::Rook, .. }) => "r",
-                    Some(Piece { piece: PieceTypes::King, .. }) => "K",
-                    Some(Piece { piece: PieceTypes::Queen, .. }) => "q",
-                    Some(Piece { piece: PieceTypes::Knight, .. }) => "k",
-                    Some(Piece { piece: PieceTypes::Pawn(_), .. }) => "p",
-                    None => ".",
-                });
-
-                if let Some(color) = win{
-                    let winner = match color {
-                        Color::Black => "black",
-                        Color::White => "white"
-                    };
-                    println!("moved {}, {} to {}, {} and {} won the game", from.file, from.rank, to.file, to.rank, winner);
-                }
-                else {
-                    println!("moved {}, {} to {}, {}", from.file, from.rank, to.file, to.rank);
+            for mv in moves {
+                match mv {
+                    Move::Normal { from, to } => {
+                        println!("{:?} is moving {}, from {:?}, {:?} to {:?}, {:?}", game.turn, piece_to_char(game.board[from]), from.file, from.rank, to.file, to.rank);
+                    },
+                    Move::Castle { side } => {
+                        println!("{:?} is castling {}", game.turn, match side {
+                            CastlingSide::KingSide => "king side",
+                            CastlingSide::QueenSide => "queen side",
+                        });
+                    },
                 }
 
-                println!(" 01234567");
-                let mut y_cord: usize = 0;
-                for y in game.board {
+                game.try_move(mv).unwrap();
+
+                println!("  A  B  C  D  E  F  G  H ");
+                let mut y_cord = 8;
+                for y in RANK_ARRAY.iter().rev() {
                     let mut t = String::new();
-                    let mut x_cord: usize = 0;
-                    for x in y {
-                        /*if x_cord == from.file && y_cord == from.rank {
-                            //t += "*";
-                            x_cord += 1;
-                            continue;
-                        }
-                        if x_cord == to.file && y_cord == to.rank {
-                            //t += "#";
-                            x_cord += 1;
-                            //continue;
-                        }*/
 
-                        t += match x {
-                            Some(Piece { piece: PieceTypes::Bishop, .. }) => "b",
-                            Some(Piece { piece: PieceTypes::Rook, .. }) => "r",
-                            Some(Piece { piece: PieceTypes::King, .. }) => "K",
-                            Some(Piece { piece: PieceTypes::Queen, .. }) => "q",
-                            Some(Piece { piece: PieceTypes::Knight, .. }) => "k",
-                            Some(Piece { piece: PieceTypes::Pawn(_), .. }) => "p",
-                            None => ".",
-                        };
-                        x_cord += 1;
+                    for x in FILE_ARRAY {
+                        t += format!("[{}]", piece_to_char(game.board[y.clone()][x])).as_str();
                     }
                     println!("{y_cord}{}",t);
-
-                    y_cord += 1;
+                    y_cord -= 1;
                 }
+            }
+            match outcome {
+                Some(Decisive { winner: pgn_reader::Color::White }) => {
+                    assert_eq!(game.game_status, GameStatus::Checkmate(Color::White));
+                },
+                Some(Decisive { winner: pgn_reader::Color::Black }) => {
+                    assert_eq!(game.game_status, GameStatus::Checkmate(Color::Black));
+                },
+                _ => {}
             }
         }
     }
