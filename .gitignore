@@ -2,3 +2,5 @@
 /Cargo.lock
 /src/main.rs
 /src/lichess_db_standard_rated_2013-01.pgn
+/.vscode
+/.idea

@@ -1,5 +1,3 @@
-use std::fmt::Display;
-
 pub mod util;
 use util::{Square, Rank, File, Board, Rows, FILE_ARRAY, RANK_ARRAY, BoardMove, get_square_array};
 
@@ -448,7 +446,7 @@ impl Game {
         for square in get_square_array() {
             if let Some(piece) = self.board[square] {
                 //println!("{:?}, {:?}", piece.piece == PieceTypes::King, piece.color == color);
-                if (piece.piece == PieceTypes::King && piece.color == color) {
+                if piece.piece == PieceTypes::King && piece.color == color {
                     king_pos = Some(square);
                 }
             }
@@ -561,8 +559,6 @@ impl Game {
     }
 
     fn test_move(&mut self, possible_board: &mut BoardMove, x: i32, y: i32, from: Square, color: Color, check_checks: bool) {
-        let mut test = false;
-
         if let Ok(square) = Square::try_from((x, y)) {
             if !self.collision_check(square, color) {
                 let test_move = Move::Normal {
@@ -570,7 +566,6 @@ impl Game {
                     to: square,
                 };
                 if !check_checks || !self.check_check(test_move, self.turn) {
-                    test = true;
                     possible_board[square] = Some(test_move);
                 }
             }
@@ -732,7 +727,6 @@ impl Game {
 #[derive(Debug, PartialEq)]
 pub enum MoveError {
     OpponentPiece,
-    ///trying to access an empty square
     EmptySquare,
     WrongPieceMovement,
     Collision,
@@ -770,10 +764,8 @@ mod tests {
 
     use reqwest;
     use tokio;
-    use std::{io::Read, env};
+    use std::env;
     use shakmaty::Outcome::Decisive;
-
-    use super::*;
 
     /*#[test]
     fn test_possible_moves_knight() {
@@ -958,7 +950,7 @@ mod tests {
     async fn database_games_test() {
         env::set_var("RUST_BACKTRACE", "1");
 
-        for i in 0..10 {
+        for _i in 0..10 {
             let res = reqwest::get("https://lichess.org/game/export/TJxUmbWK")
                 .await
                 .unwrap()
