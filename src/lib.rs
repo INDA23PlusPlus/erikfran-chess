@@ -35,7 +35,7 @@ pub struct Piece {
     pub color: Color,
 }
 
-#[derive(PartialEq, Debug)]
+#[derive(PartialEq, Debug, Clone, Copy)]
 pub enum GameStatus {
     Checkmate(Color),
     Ongoing,
